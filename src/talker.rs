@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Talker {
     pubkey : PubKey,
     id: String,
@@ -19,10 +20,12 @@ impl Talker {
     }
 }
 
+#[derive(Debug)]
 enum PubKeyFmt {
     SshKeyFile,
 }
 
+#[derive(Debug)]
 pub struct PubKey {
     keyfmt: PubKeyFmt,
     key: Vec<u8>,
@@ -37,11 +40,14 @@ impl PubKey {
         }
     }
 }
+
+#[derive(Debug)]
 enum ConnectionState {
     DISCONNECT,
     CONNECTED,
 }
 
+#[derive(Debug)]
 struct Connection {
 }
 

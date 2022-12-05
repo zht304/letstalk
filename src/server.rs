@@ -2,12 +2,81 @@
 //! And manages available rooms. Peers send messages to other peers in same
 //! room through `ChatServer`.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use actix::prelude::*;
 use rand::{self, rngs::ThreadRng, Rng};
+use serde:: { Serialize, Deserialize};
 
-use crate::session;
+use crate::talker::Talker;
+use ring::{digest};
+
+#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
+pub enum ControlMsg {
+    Request {
+        request_id: String,
+        payload: ControlRequest,
+    },
+
+    Response {
+        request_id: String,
+        payload: ControlResponse,
+    }
+}
+
+#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
+#[derive(Message)]
+#[rtype("()")]
+pub enum ControlResponse {
+    RegisterReply {
+        uid: String,
+    },
+    LoginReply {
+        uid: String,
+    },
+    Error{reason: String}
+}
+
+#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
+#[derive(Message)]
+#[rtype(result = "ControlResponse")]
+pub enum ControlRequest {
+    Register{
+        id: String,
+        name: String,
+        pub_key: String,
+        password: String,
+        key_format: KeyFormat
+    },
+
+    Login {
+        id: String,
+        pub_key: String,
+        password: String,
+        key_format: KeyFormat
+    }
+}
+
+#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
+pub enum KeyFormat {
+    SshKey,
+}
+
+
+/// Chat server sends this messages to session
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Message(pub String);
 
 /// Message for chat server communications
 
@@ -15,7 +84,7 @@ use crate::session;
 #[derive(Message)]
 #[rtype(usize)]
 pub struct Connect {
-    pub addr: Recipient<session::Message>,
+    pub addr: Recipient<Message>,
 }
 
 /// Session is disconnected
@@ -28,7 +97,7 @@ pub struct Disconnect {
 /// Send message to specific room
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct Message {
+pub struct ClientMessage {
     /// Id of the client session
     pub id: usize,
     /// Peer message
@@ -48,22 +117,27 @@ impl actix::Message for ListRooms {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Join {
-    /// Client id
+    /// Client ID
     pub id: usize,
+
     /// Room name
     pub name: String,
 }
 
-/// `ChatServer` manages chat rooms and responsible for coordinating chat
-/// session. implementation is super primitive
+/// `ChatServer` manages chat rooms and responsible for coordinating chat session.
+///
+/// Implementation is very naïve.
+#[derive(Debug)]
 pub struct ChatServer {
-    sessions: HashMap<usize, Recipient<session::Message>>,
+    sessions: HashMap<usize, Recipient<Message>>,
     rooms: HashMap<String, HashSet<usize>>,
     rng: ThreadRng,
+    visitor_count: Arc<AtomicUsize>,
+    talkers: HashMap<String, Talker>,
 }
 
-impl Default for ChatServer {
-    fn default() -> ChatServer {
+impl ChatServer {
+    pub fn new(visitor_count: Arc<AtomicUsize>) -> ChatServer {
         // default room
         let mut rooms = HashMap::new();
         rooms.insert("main".to_owned(), HashSet::new());
@@ -72,6 +146,8 @@ impl Default for ChatServer {
             sessions: HashMap::new(),
             rooms,
             rng: rand::thread_rng(),
+            visitor_count,
+            talkers: HashMap::new(),
         }
     }
 }
@@ -83,7 +159,7 @@ impl ChatServer {
             for id in sessions {
                 if *id != skip_id {
                     if let Some(addr) = self.sessions.get(id) {
-                        addr.do_send(session::Message(message.to_owned()));
+                        addr.do_send(Message(message.to_owned()));
                     }
                 }
             }
@@ -115,7 +191,13 @@ impl Handler<Connect> for ChatServer {
         self.sessions.insert(id, msg.addr);
 
         // auto join session to main room
-        self.rooms.get_mut("main").unwrap().insert(id);
+        self.rooms
+            .entry("main".to_owned())
+            .or_insert_with(HashSet::new)
+            .insert(id);
+
+        let count = self.visitor_count.fetch_add(1, Ordering::SeqCst);
+        self.send_message("main", &format!("Total visitors {count}"), 0);
 
         // send id back
         id
@@ -147,11 +229,28 @@ impl Handler<Disconnect> for ChatServer {
     }
 }
 
+/// handler for commands
+impl Handler<ControlRequest> for ChatServer {
+    type Result = MessageResult<ControlRequest>;
+
+    fn handle(&mut self, msg: ControlRequest, ctx: &mut Context<Self>) -> Self::Result {
+        match msg {
+            ControlRequest::Register { id, name, pub_key, password, key_format } =>  {
+                let talker = Talker::new(pub_key.as_bytes(), &name[..], &id[..]);
+                let sha = digest::digest(&digest::SHA256, pub_key.as_bytes());
+                let uid_str = hex::encode(sha.as_ref());
+                self.talkers.insert(uid_str.clone(), talker);
+                MessageResult(ControlResponse::RegisterReply { uid: uid_str })
+            } ,
+        }
+    }
+}
+
 /// Handler for Message message.
-impl Handler<Message> for ChatServer {
+impl Handler<ClientMessage> for ChatServer {
     type Result = ();
 
-    fn handle(&mut self, msg: Message, _: &mut Context<Self>) {
+    fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) {
         self.send_message(&msg.room, msg.msg.as_str(), msg.id);
     }
 }
@@ -191,10 +290,11 @@ impl Handler<Join> for ChatServer {
             self.send_message(&room, "Someone disconnected", 0);
         }
 
-        if self.rooms.get_mut(&name).is_none() {
-            self.rooms.insert(name.clone(), HashSet::new());
-        }
+        self.rooms
+            .entry(name.clone())
+            .or_insert_with(HashSet::new)
+            .insert(id);
+
         self.send_message(&name, "Someone connected", id);
-        self.rooms.get_mut(&name).unwrap().insert(id);
     }
 }

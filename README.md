@@ -86,41 +86,51 @@ talker -- ws(s) -- server
 
 
 ```json
-   {
-      "type" : "register", 
-      "request": {
-         "request_id" : "",
-         "id": "your id", 
-         "name":"xxxxx",
-         "pubk": "xxxxxxxxxxx",
-         "passwd": "123455",
-         "keyfmt": "ssh_key",
-      },
-   }
+{
+  "Request": {
+    "request_id": "001",
+    "payload": {
+      "Register": {
+        "id": "thomas",
+        "name": "huoche",
+        "pub_key": "ssh-rsa AAA",
+        "password": "12345",
+        "key_format": "SshKey"
+      }
+    }
+  }
+}
 ```
 
 - server -> talker:
 
 ```json
-   {
-      "type":"register-reply",
-      "reply":  {
-         "request_id" : "",
-         "result" : "ok",
-         "uid"    : "sha256 of the key"
-      }
-   }
+{ 
+   "Response": { 
+      "request_id": "001", 
+      "payload": { 
+         "RegisterReply": { 
+            "uid": "62b1ace7211de774b80196be0c8ccc40db9260c684ddaa9f22bd9fd62ba9576a" 
+         } 
+      } 
+   } 
+}
 ```
 
+### common error response
+- server -> talker:
+
 ```json
-   {
-      "type":"register-reply",
-      "reply":  {
-         "request_id" : "",
-         "result" : "fail",
-         "reason" : "duplicate id/ invalid key"
-      }
-   }
+{ 
+   "Response": { 
+      "request_id": "001", 
+      "payload": { 
+         "Error": { 
+            "reason": "some reason" 
+         } 
+      } 
+   } 
+}
 ```
 
 ### login
@@ -130,40 +140,34 @@ talker -- ws(s) -- server
    proto:wss text masked  
    payload: json  
 ```json
-   {
-      "type" : "login",
-      "request" : {
-         "request_id" : "",
-         "id":"xxxxx",
-         "pubk": "xxxxxxxxxxx",
-         "passwd": "123455",
-         "keyfmt": "ssh_key",
-      },
-   }
+{
+  "Request": {
+    "request_id": "001",
+    "payload": {
+      "Login": {
+        "id": "thomas",
+        "pub_key": "ssh-rsa AAA",
+        "password": "12345",
+        "key_format": "SshKey"
+      }
+    }
+  }
+}
 ```
 
 - server -> talker
 
 ```json
-   {
-      "type":"login-reply",
-      "reply":  {
-         "request_id" : "",
-         "result" : "ok",
-         "uid"    : "sha256 of the key"
-      }
-   }
-```
-
-```json
-   {
-      "type":"login-reply",
-      "reply":  {
-         "request_id" : "",
-         "result" : "fail",
-         "reason" : "invalid key"
-      }
-   }
+{ 
+   "Response": { 
+      "request_id": "001", 
+      "payload": { 
+         "LoginReply": { 
+            "uid": "62b1ace7211de774b80196be0c8ccc40db9260c684ddaa9f22bd9fd62ba9576a" 
+         } 
+      } 
+   } 
+}
 ```
 
 
@@ -172,42 +176,17 @@ talker -- ws(s) -- server
 - talker -> server:
 
 ```json
-   {
-      "type":"create-group",
-      "request":  {
-         "request_id" : "",
-         "members" : ["uid1", "uid2"],
-         "type" : "normal",
-      }
-   }
 ```
 
 - server -> talker:
 
 ```json
-   {
-      "type":"create-group-reply",
-      "reply":  {
-         "request_id" : "",
-         "result" : "ok/fail",
-         "group" : {
-            "gid" : "xxxx",
-         }
-      }
-   }
 ```
 ### list
 
 - talker -> server: list(talkers)
 
 ```json
-   {
-      "type":"list",
-      "request":  {
-         "request_id" : "",
-         "uid": ["",""],
-      }
-   }
 ```
 
 - server -> talk:   reply_list() -> talker {uid=SHA(pubkey), name}
