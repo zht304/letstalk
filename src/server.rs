@@ -14,7 +14,7 @@ use actix::prelude::*;
 use rand::{self, rngs::ThreadRng, Rng};
 use serde:: { Serialize, Deserialize};
 
-use crate::talker::Talker;
+use crate::talker::{PubKey,Talker};
 use ring::{digest};
 
 #[derive(Debug)]
@@ -62,12 +62,13 @@ pub enum ControlRequest {
         id: String,
         pub_key: String,
         password: String,
-        key_format: KeyFormat
+        key_format: KeyFormat,
     }
 }
 
 #[derive(Debug)]
 #[derive(Serialize, Deserialize)]
+#[derive(PartialEq)]
 pub enum KeyFormat {
     SshKey,
 }
@@ -165,6 +166,17 @@ impl ChatServer {
             }
         }
     }
+
+    fn generate_uid(&self, pub_key: &[u8]) -> String {
+        let sha = digest::digest(&digest::SHA256, pub_key);
+        let uid_str = hex::encode(sha.as_ref());
+        uid_str
+    }
+
+    fn compare_passwd(&self, stored_passwd: &[u8], input: &str) -> bool {
+        let sha = digest::digest(&digest::SHA256, input.as_bytes());
+        stored_passwd == sha.as_ref()
+    }
 }
 
 /// Make actor from `ChatServer`
@@ -236,12 +248,47 @@ impl Handler<ControlRequest> for ChatServer {
     fn handle(&mut self, msg: ControlRequest, ctx: &mut Context<Self>) -> Self::Result {
         match msg {
             ControlRequest::Register { id, name, pub_key, password, key_format } =>  {
-                let talker = Talker::new(pub_key.as_bytes(), &name[..], &id[..]);
-                let sha = digest::digest(&digest::SHA256, pub_key.as_bytes());
-                let uid_str = hex::encode(sha.as_ref());
-                self.talkers.insert(uid_str.clone(), talker);
-                MessageResult(ControlResponse::RegisterReply { uid: uid_str })
+                let uid_str = self.generate_uid(pub_key.as_bytes());
+                let pkey = PubKey::from_sshkey(&pub_key[..]);
+                match pkey {
+                    Some(key) => {
+                        let talker = Talker::new(key, &name[..], &id[..], &password[..]);
+                        self.talkers.insert(uid_str.clone(), talker);
+                        MessageResult(ControlResponse::RegisterReply { uid: uid_str })
+                    },
+                    None => {
+                        return MessageResult(ControlResponse::Error { reason: String::from("invalid pub key") });
+                    }
+                }
             } ,
+
+            ControlRequest::Login { id, pub_key, password, key_format } => {
+                let uid = self.generate_uid(pub_key.as_bytes());
+
+                if let Some(talker) = self.talkers.get(&uid) {
+                    if self.compare_passwd(talker.password(), &password) {
+                        let key : Option<PubKey>;
+                        match key_format {
+                            KeyFormat::SshKey => { key = PubKey::from_sshkey(&pub_key[..]) },
+                        }
+                        match key {
+                            Some(key) => {
+                                if talker.pubkey.compare_key(&key) {
+                                    MessageResult(ControlResponse::LoginReply { uid: uid })
+                                } else {
+                                    MessageResult(ControlResponse::Error { reason: String::from("pubkey not matched") })
+                                }
+                            },
+                            None => 
+                                    MessageResult(ControlResponse::Error { reason: String::from("invalid pubkey") })
+                        }
+                    } else {
+                        MessageResult(ControlResponse::Error { reason: String::from("password not matched") })
+                    }
+                } else {
+                    MessageResult(ControlResponse::Error { reason: String::from("pub key not found") })
+                }
+            }
         }
     }
 }
